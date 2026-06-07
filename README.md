@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/dungnotnull/local-scout-agent/main/assets/logo.svg" alt="Local Scout Agent" width="120" onerror="this.style.display='none'" />
-</p>
-
 <h1 align="center">Local Scout Agent</h1>
 
 <p align="center">
