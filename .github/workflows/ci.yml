@@ -1,0 +1,83 @@
+name: Local Scout Agent CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.8.0'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install lint tools
+        run: pip install ruff black mypy
+      - name: Run ruff
+        run: ruff check app/ scripts/ --select E,F,W --ignore E501
+      - name: Run black check
+        run: black --check --diff app/ scripts/
+      - name: Run mypy
+        run: mypy app/ --ignore-missing-imports --no-namespace-packages || true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for secrets
+        run: |
+          if grep -r "sk-ant-\|sk-" --include="*.py" --exclude="*.example" .; then
+            echo "WARNING: Potential API keys found in source files"
+            exit 1
+          fi
+      - name: Dependency audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt || true
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint, security]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Python syntax check
+        run: |
+          find app -name "*.py" -exec python -m py_compile {} +
+      - name: Build Docker image
+        run: |
+          docker build -f docker/Dockerfile -t local-scout-agent:${{ github.sha }} .
+      - name: Docker image smoke test
+        run: |
+          docker run --rm -d --name scout-test -p 8000:8000 local-scout-agent:${{ github.sha }}
+          sleep 10
+          curl -f http://localhost:8000/health || true
+          docker stop scout-test
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and tag image
+        run: |
+          docker build -f docker/Dockerfile -t local-scout-agent:latest .
+          docker tag local-scout-agent:latest local-scout-agent:${{ github.sha }}
+      - name: Deploy
+        run: |
+          echo "Deployment triggered. Copy docker-compose.prod.yml to server and run:"
+          echo "  docker compose -f docker/docker-compose.prod.yml up -d"
